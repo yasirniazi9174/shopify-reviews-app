@@ -13,19 +13,19 @@ function cloudinaryUpload(base64Data, resourceType) {
     const timestamp = Math.floor(Date.now() / 1000);
     const signature = crypto
       .createHash('sha1')
-      .update(`timestamp=${timestamp}${API_SECRET}`)
+      .update('timestamp=' + timestamp + API_SECRET)
       .digest('hex');
 
     const formData = [
-      `file=data:${resourceType === 'video' ? 'video/mp4' : 'image/jpeg'};base64,${base64Data}`,
-      `api_key=${API_KEY}`,
-      `timestamp=${timestamp}`,
-      `signature=${signature}`
+      'file=data:' + (resourceType === 'video' ? 'video/mp4' : 'image/jpeg') + ';base64,' + base64Data,
+      'api_key=' + API_KEY,
+      'timestamp=' + timestamp,
+      'signature=' + signature
     ].join('&');
 
     const options = {
       hostname: 'api.cloudinary.com',
-      path: `/v1_1/${CLOUD_NAME}/${resourceType}/upload`,
+      path: '/v1_1/' + CLOUD_NAME + '/' + resourceType + '/upload',
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -55,9 +55,9 @@ function getFile() {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'api.github.com',
-      path: `/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
+      path: '/repos/' + GITHUB_REPO + '/contents/' + GITHUB_FILE_PATH,
       headers: {
-        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Authorization': 'token ' + GITHUB_TOKEN,
         'User-Agent': 'reviews-app'
       }
     };
@@ -78,10 +78,10 @@ function saveFile(content, sha) {
     });
     const options = {
       hostname: 'api.github.com',
-      path: `/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`,
+      path: '/repos/' + GITHUB_REPO + '/contents/' + GITHUB_FILE_PATH,
       method: 'PUT',
       headers: {
-        'Authorization': `token ${GITHUB_TOKEN}`,
+        'Authorization': 'token ' + GITHUB_TOKEN,
         'User-Agent': 'reviews-app',
         'Content-Type': 'application/json',
         'Content-Length': Buffer.byteLength(body)
@@ -103,39 +103,48 @@ module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
-  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
 
   try {
     const fileData = await getFile();
     const sha = fileData.sha;
-    const existing = JSON.parse(Buffer.from(fileData.content, 'base64').toString());
+    const decoded = Buffer.from(fileData.content, 'base64').toString();
+    const existing = JSON.parse(decoded);
 
     if (req.method === 'GET') {
-  return res.status(200).json({ reviews: existing.reviews || existing || [] });
-}
+      return res.status(200).json({ reviews: existing.reviews || [] });
     }
 
     if (req.method === 'POST') {
-      const { name, title, body, rating, media } = req.body;
+      const name = req.body.name;
+      const title = req.body.title;
+      const body = req.body.body;
+      const rating = req.body.rating;
+      const media = req.body.media || [];
 
-      // Upload media to Cloudinary
       var uploadedMedia = [];
-      if (media && media.length > 0) {
-        for (var i = 0; i < media.length; i++) {
-          var item = media[i];
-          var base64 = item.data.split(',')[1];
-          var resourceType = item.type === 'video' ? 'video' : 'image';
-          var url = await cloudinaryUpload(base64, resourceType);
-          uploadedMedia.push({ url: url, type: item.type });
-        }
+      for (var i = 0; i < media.length; i++) {
+        var item = media[i];
+        var base64 = item.data.split(',')[1];
+        var resourceType = item.type === 'video' ? 'video' : 'image';
+        var url = await cloudinaryUpload(base64, resourceType);
+        uploadedMedia.push({ url: url, type: item.type });
       }
 
       const review = {
-        name, title, body, rating,
+        name: name,
+        title: title,
+        body: body,
+        rating: rating,
         media: uploadedMedia,
         ts: Date.now()
       };
 
+      if (!existing.reviews) {
+        existing.reviews = [];
+      }
       existing.reviews.push(review);
       await saveFile(existing, sha);
 
