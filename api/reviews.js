@@ -111,7 +111,8 @@ module.exports = async (req, res) => {
     const existing = JSON.parse(Buffer.from(fileData.content, 'base64').toString());
 
     if (req.method === 'GET') {
-      return res.status(200).json(existing);
+  return res.status(200).json({ reviews: existing.reviews || existing || [] });
+}
     }
 
     if (req.method === 'POST') {
