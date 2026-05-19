@@ -1,6 +1,11 @@
 const https = require('https');
 const crypto = require('crypto');
 
+// Vercel body size config
+module.exports.config = {
+  api: { bodyParser: { sizeLimit: '20mb' } }
+};
+
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_REPO = process.env.GITHUB_REPO;
 const GITHUB_FILE_PATH = process.env.GITHUB_FILE_PATH || 'reviews/reviews.json';
