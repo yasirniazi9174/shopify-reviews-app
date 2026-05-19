@@ -1,11 +1,6 @@
 const https = require('https');
 const crypto = require('crypto');
 
-// Vercel body size config
-module.exports.config = {
-  api: { bodyParser: { sizeLimit: '20mb' } }
-};
-
 const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
 const GITHUB_REPO = process.env.GITHUB_REPO;
 const GITHUB_FILE_PATH = process.env.GITHUB_FILE_PATH || 'reviews/reviews.json';
@@ -44,13 +39,17 @@ function cloudinaryUpload(base64Data, resourceType) {
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
-          resolve(parsed.secure_url);
+          if (parsed.secure_url) {
+            resolve(parsed.secure_url);
+          } else {
+            resolve(null);
+          }
         } catch(e) {
-          reject(e);
+          resolve(null);
         }
       });
     });
-    req.on('error', reject);
+    req.on('error', () => resolve(null));
     req.write(formData);
     req.end();
   });
@@ -69,7 +68,9 @@ function getFile() {
     https.get(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(JSON.parse(data)));
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
+      });
     }).on('error', reject);
   });
 }
@@ -95,7 +96,9 @@ function saveFile(content, sha) {
     const req = https.request(options, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
-      res.on('end', () => resolve(JSON.parse(data)));
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch(e) { reject(e); }
+      });
     });
     req.on('error', reject);
     req.write(body);
@@ -103,7 +106,7 @@ function saveFile(content, sha) {
   });
 }
 
-module.exports = async (req, res) => {
+async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -118,46 +121,72 @@ module.exports = async (req, res) => {
     const decoded = Buffer.from(fileData.content, 'base64').toString();
     const existing = JSON.parse(decoded);
 
+    if (!existing.reviews) {
+      existing.reviews = [];
+    }
+
     if (req.method === 'GET') {
-      return res.status(200).json({ reviews: existing.reviews || [] });
+      return res.status(200).json({ reviews: existing.reviews });
     }
 
     if (req.method === 'POST') {
-      const name = req.body.name;
-      const title = req.body.title;
-      const body = req.body.body;
-      const rating = req.body.rating;
-      const media = req.body.media || [];
+      let body = req.body;
+
+      // Parse body manually if needed
+      if (typeof body === 'string') {
+        body = JSON.parse(body);
+      }
+
+      const name = body.name;
+      const title = body.title;
+      const reviewBody = body.body;
+      const rating = body.rating;
+      const media = body.media || [];
 
       var uploadedMedia = [];
       for (var i = 0; i < media.length; i++) {
-        var item = media[i];
-        var base64 = item.data.split(',')[1];
-        var resourceType = item.type === 'video' ? 'video' : 'image';
-        var url = await cloudinaryUpload(base64, resourceType);
-        uploadedMedia.push({ url: url, type: item.type });
+        try {
+          var item = media[i];
+          var base64 = item.data.split(',')[1];
+          var resourceType = item.type === 'video' ? 'video' : 'image';
+          var url = await cloudinaryUpload(base64, resourceType);
+          if (url) {
+            uploadedMedia.push({ url: url, type: item.type });
+          }
+        } catch(e) {
+          console.error('Media skip:', e.message);
+        }
       }
 
       const review = {
         name: name,
         title: title,
-        body: body,
+        body: reviewBody,
         rating: rating,
         media: uploadedMedia,
         ts: Date.now()
       };
 
-      if (!existing.reviews) {
-        existing.reviews = [];
-      }
       existing.reviews.push(review);
       await saveFile(existing, sha);
 
       return res.status(200).json({ success: true });
     }
 
+    return res.status(405).json({ error: 'Method not allowed' });
+
   } catch(err) {
-    console.error(err);
+    console.error('Error:', err.message);
     return res.status(500).json({ error: err.message });
   }
+}
+
+handler.config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '20mb'
+    }
+  }
 };
+
+module.exports = handler;
