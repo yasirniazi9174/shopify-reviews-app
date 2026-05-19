@@ -1,65 +1,51 @@
-const SHOP = process.env.SHOPIFY_SHOP_DOMAIN; // e.g. your-store.myshopify.com
-const TOKEN = process.env.SHOPIFY_ADMIN_TOKEN; // Admin API token
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GITHUB_REPO = process.env.GITHUB_REPO;
+const GITHUB_FILE_PATH = process.env.GITHUB_FILE_PATH;
 
-const METAFIELD_NAMESPACE = 'reviews_app';
-const METAFIELD_KEY = 'all_reviews';
+const GITHUB_API = `https://api.github.com/repos/${GITHUB_REPO}/contents/${GITHUB_FILE_PATH}`;
 
-async function getMetafield() {
-  const res = await fetch(
-    `https://${SHOP}/admin/api/2024-01/metafields.json?namespace=${METAFIELD_NAMESPACE}&key=${METAFIELD_KEY}&owner_resource=shop`,
-    {
-      headers: {
-        'X-Shopify-Access-Token': TOKEN,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
+async function getReviews() {
+  const res = await fetch(GITHUB_API, {
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github.v3+json',
+    },
+  });
+
+  if (res.status === 404) {
+    return { sha: null, reviews: [] };
+  }
+
   const data = await res.json();
-  const mf = data.metafields?.[0];
-  if (!mf) return { id: null, reviews: [] };
+  const content = Buffer.from(data.content, 'base64').toString('utf8');
   try {
-    return { id: mf.id, reviews: JSON.parse(mf.value) };
+    return { sha: data.sha, reviews: JSON.parse(content) };
   } catch {
-    return { id: mf.id, reviews: [] };
+    return { sha: data.sha, reviews: [] };
   }
 }
 
-async function saveMetafield(id, reviews) {
+async function saveReviews(sha, reviews) {
+  const content = Buffer.from(JSON.stringify(reviews, null, 2)).toString('base64');
+
   const body = {
-    metafield: {
-      namespace: METAFIELD_NAMESPACE,
-      key: METAFIELD_KEY,
-      type: 'json',
-      value: JSON.stringify(reviews),
-      owner_resource: 'shop',
-    },
+    message: 'Update reviews',
+    content,
+    ...(sha && { sha }),
   };
 
-  if (id) {
-    // Update existing
-    await fetch(`https://${SHOP}/admin/api/2024-01/metafields/${id}.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': TOKEN,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-  } else {
-    // Create new
-    await fetch(`https://${SHOP}/admin/api/2024-01/metafields.json`, {
-      method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': TOKEN,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-    });
-  }
+  await fetch(GITHUB_API, {
+    method: 'PUT',
+    headers: {
+      Authorization: `token ${GITHUB_TOKEN}`,
+      Accept: 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
 }
 
 export default async function handler(req, res) {
-  // Allow CORS from your Shopify store
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -70,20 +56,18 @@ export default async function handler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      // Return all reviews
-      const { reviews } = await getMetafield();
+      const { reviews } = await getReviews();
       return res.status(200).json({ reviews });
     }
 
     if (req.method === 'POST') {
-      // Save new review
       const { name, title, body, rating, media } = req.body;
 
       if (!name || !title || !body || !rating) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      const { id, reviews } = await getMetafield();
+      const { sha, reviews } = await getReviews();
 
       const newReview = {
         id: Date.now(),
@@ -96,7 +80,7 @@ export default async function handler(req, res) {
       };
 
       reviews.push(newReview);
-      await saveMetafield(id, reviews);
+      await saveReviews(sha, reviews);
 
       return res.status(200).json({ success: true, review: newReview });
     }
